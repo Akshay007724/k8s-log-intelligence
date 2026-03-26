@@ -1,6 +1,7 @@
 import pytest
 from httpx import AsyncClient, ASGITransport
 from src.mcp_k8s_server import app as k8s_app
+from src.mcp_logs_server import app as logs_app
 
 @pytest.mark.asyncio
 async def test_get_pod_status_returns_shard():
@@ -38,3 +39,26 @@ async def test_get_deployment_changes_returns_shard():
     data = resp.json()
     assert "summary" in data
     assert "severity" in data
+
+@pytest.mark.asyncio
+async def test_get_logs_summary_returns_shard():
+    transport = ASGITransport(app=logs_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post("/get_logs_summary", json={
+            "service": "payment-svc", "namespace": "production"
+        })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "summary" in data
+    assert len(data["summary"].split()) < 120
+
+@pytest.mark.asyncio
+async def test_get_error_patterns_returns_shard():
+    transport = ASGITransport(app=logs_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post("/get_error_patterns", json={
+            "service": "payment-svc", "namespace": "production"
+        })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "entities" in data
