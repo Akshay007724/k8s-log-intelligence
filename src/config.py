@@ -1,4 +1,4 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     anthropic_api_key: str = ""
@@ -10,7 +10,6 @@ class Settings(BaseSettings):
     failure_gravity_threshold: float = 0.65
     max_tool_calls: int = 3
 
-    class Config:
-        env_file = ".env"
+    model_config = SettingsConfigDict(env_file=".env")
 
 settings = Settings()

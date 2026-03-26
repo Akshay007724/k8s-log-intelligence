@@ -18,7 +18,7 @@ class IncidentReport(BaseModel):
     ]
     root_cause: str = Field(max_length=300)
     confidence: float = Field(ge=0.0, le=1.0)
-    evidence: list[str]  # capped at 3 items by root_cause_agent via slicing
+    evidence: list[str] = Field(default=[], max_length=3)
     suggested_fix: str = Field(max_length=200)
 
 class AgentState(BaseModel):
