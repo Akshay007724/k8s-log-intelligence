@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k8s-log-intelligence-config
+  namespace: monitoring
+data:
+  IN_CLUSTER: "true"
+  MCP_K8S_URL: "http://mcp-k8s-server.monitoring.svc.cluster.local:8001"
+  MCP_LOGS_URL: "http://mcp-logs-server.monitoring.svc.cluster.local:8002"
+  MCP_METRICS_URL: "http://mcp-metrics-server.monitoring.svc.cluster.local:8003"
+  FAILURE_GRAVITY_THRESHOLD: "0.65"
+  MAX_TOOL_CALLS: "3"

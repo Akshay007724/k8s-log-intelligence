@@ -1,0 +1,207 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: context-weaver
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: context-weaver
+  template:
+    metadata:
+      labels:
+        app: context-weaver
+    spec:
+      serviceAccountName: k8s-log-intelligence
+      containers:
+      - name: context-weaver
+        image: k8s-log-intelligence:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8000
+        envFrom:
+        - configMapRef:
+            name: k8s-log-intelligence-config
+        env:
+        - name: ANTHROPIC_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: k8s-log-intelligence-secrets
+              key: api-key
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: context-weaver
+  namespace: monitoring
+spec:
+  type: ClusterIP
+  selector:
+    app: context-weaver
+  ports:
+  - port: 8000
+    targetPort: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-k8s-server
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-k8s-server
+  template:
+    metadata:
+      labels:
+        app: mcp-k8s-server
+    spec:
+      serviceAccountName: k8s-log-intelligence
+      containers:
+      - name: mcp-k8s-server
+        image: k8s-log-intelligence:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8001
+        command:
+        - uvicorn
+        - src.mcp_k8s_server:app
+        - --host
+        - "0.0.0.0"
+        - --port
+        - "8001"
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-k8s-server
+  namespace: monitoring
+spec:
+  type: ClusterIP
+  selector:
+    app: mcp-k8s-server
+  ports:
+  - port: 8001
+    targetPort: 8001
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-logs-server
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-logs-server
+  template:
+    metadata:
+      labels:
+        app: mcp-logs-server
+    spec:
+      serviceAccountName: k8s-log-intelligence
+      containers:
+      - name: mcp-logs-server
+        image: k8s-log-intelligence:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8002
+        command:
+        - uvicorn
+        - src.mcp_logs_server:app
+        - --host
+        - "0.0.0.0"
+        - --port
+        - "8002"
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-logs-server
+  namespace: monitoring
+spec:
+  type: ClusterIP
+  selector:
+    app: mcp-logs-server
+  ports:
+  - port: 8002
+    targetPort: 8002
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-metrics-server
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-metrics-server
+  template:
+    metadata:
+      labels:
+        app: mcp-metrics-server
+    spec:
+      serviceAccountName: k8s-log-intelligence
+      containers:
+      - name: mcp-metrics-server
+        image: k8s-log-intelligence:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8003
+        command:
+        - uvicorn
+        - src.mcp_metrics_server:app
+        - --host
+        - "0.0.0.0"
+        - --port
+        - "8003"
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-metrics-server
+  namespace: monitoring
+spec:
+  type: ClusterIP
+  selector:
+    app: mcp-metrics-server
+  ports:
+  - port: 8003
+    targetPort: 8003
