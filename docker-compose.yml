@@ -1,0 +1,47 @@
+version: "3.9"
+
+services:
+  context-weaver:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - IN_CLUSTER=false
+      - MCP_K8S_URL=http://mcp-k8s-server:8001
+      - MCP_LOGS_URL=http://mcp-logs-server:8002
+      - MCP_METRICS_URL=http://mcp-metrics-server:8003
+    depends_on:
+      - mcp-k8s-server
+      - mcp-logs-server
+      - mcp-metrics-server
+
+  mcp-k8s-server:
+    build: .
+    command: ["uvicorn", "src.mcp_k8s_server:app", "--host", "0.0.0.0", "--port", "8001"]
+    ports:
+      - "8001:8001"
+    environment:
+      - IN_CLUSTER=false
+    volumes:
+      - ~/.kube:/root/.kube:ro
+
+  mcp-logs-server:
+    build: .
+    command: ["uvicorn", "src.mcp_logs_server:app", "--host", "0.0.0.0", "--port", "8002"]
+    ports:
+      - "8002:8002"
+    environment:
+      - IN_CLUSTER=false
+    volumes:
+      - ~/.kube:/root/.kube:ro
+
+  mcp-metrics-server:
+    build: .
+    command: ["uvicorn", "src.mcp_metrics_server:app", "--host", "0.0.0.0", "--port", "8003"]
+    ports:
+      - "8003:8003"
+    environment:
+      - IN_CLUSTER=false
+    volumes:
+      - ~/.kube:/root/.kube:ro
