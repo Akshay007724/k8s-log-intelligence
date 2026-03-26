@@ -1,0 +1,979 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>K8s Log Intelligence — Diagnose failures in 2 seconds</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;0,600;1,300&family=Barlow+Condensed:wght@300;700;900&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg:         #04080f;
+      --bg2:        #080e18;
+      --bg3:        #0d1520;
+      --panel:      #0a1422;
+      --border:     #162032;
+      --green:      #00ff6e;
+      --green-dim:  #00b84d;
+      --green-glow: rgba(0,255,110,0.15);
+      --red:        #ff2440;
+      --amber:      #ffcc00;
+      --blue:       #00aaff;
+      --text:       #b8ccd8;
+      --text-dim:   #4d6678;
+      --white:      #e8f0f4;
+      --font-mono:  'IBM Plex Mono', 'Courier New', monospace;
+      --font-disp:  'Barlow Condensed', sans-serif;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-mono);
+      font-size: 14px;
+      line-height: 1.7;
+      overflow-x: hidden;
+    }
+    body::before {
+      content: '';
+      position: fixed; inset: 0;
+      background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.07) 2px, rgba(0,0,0,0.07) 4px);
+      pointer-events: none;
+      z-index: 9999;
+    }
+
+    /* NAV */
+    nav {
+      position: fixed; top: 0; left: 0; right: 0;
+      z-index: 100;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 2rem;
+      height: 52px;
+      background: rgba(4,8,15,0.88);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-logo { font-size: 12px; color: var(--green); letter-spacing: 0.08em; text-decoration: none; }
+    .nav-logo span { color: var(--text-dim); }
+    .nav-links { display: flex; gap: 1.5rem; align-items: center; }
+    .nav-links a { font-size: 11px; color: var(--text-dim); text-decoration: none; letter-spacing: 0.06em; transition: color 0.2s; }
+    .nav-links a:hover { color: var(--green); }
+    .nav-btn { font-size: 11px; color: var(--bg) !important; background: var(--green); padding: 6px 14px; border-radius: 2px; font-weight: 600; }
+    .nav-btn:hover { opacity: 0.85; }
+
+    /* HERO */
+    .hero {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      padding-top: 52px;
+      position: relative;
+      overflow: hidden;
+    }
+    .hero-bg {
+      position: absolute; inset: 0;
+      background:
+        radial-gradient(ellipse 60% 50% at 20% 50%, rgba(0,255,110,0.04) 0%, transparent 70%),
+        radial-gradient(ellipse 40% 60% at 80% 30%, rgba(0,170,255,0.03) 0%, transparent 70%);
+    }
+    .hero-grid {
+      position: absolute; inset: 0;
+      background-image:
+        linear-gradient(rgba(22,32,50,0.4) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(22,32,50,0.4) 1px, transparent 1px);
+      background-size: 40px 40px;
+    }
+    .hero-left {
+      display: flex; flex-direction: column; justify-content: center;
+      padding: 5rem 3rem 5rem 4rem;
+      position: relative; z-index: 1;
+    }
+    .hero-eyebrow {
+      font-size: 11px; color: var(--green); letter-spacing: 0.2em;
+      margin-bottom: 1.5rem;
+      display: flex; align-items: center; gap: 0.5rem;
+    }
+    .hero-eyebrow::before { content: ''; display: block; width: 24px; height: 1px; background: var(--green); }
+    .hero-title {
+      font-family: var(--font-disp);
+      font-size: clamp(3.5rem, 6vw, 6rem);
+      font-weight: 900;
+      line-height: 0.9;
+      color: var(--white);
+      margin-bottom: 2rem;
+    }
+    .hero-title .accent { color: var(--green); }
+    .hero-title .dim { display: block; color: var(--text-dim); font-weight: 300; }
+    .hero-stat {
+      display: flex; align-items: center; gap: 1rem;
+      margin-bottom: 2.5rem;
+      padding: 1rem 1.25rem;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--green);
+      width: fit-content;
+    }
+    .stat-big { font-family: var(--font-disp); font-size: 2.5rem; font-weight: 900; line-height: 1; }
+    .stat-big.red  { color: var(--red); }
+    .stat-big.green { color: var(--green); }
+    .stat-lbl { font-size: 11px; color: var(--text-dim); letter-spacing: 0.06em; }
+    .stat-arrow { font-size: 1.5rem; color: var(--text-dim); }
+    .hero-desc { font-size: 13px; color: var(--text); max-width: 420px; margin-bottom: 2.5rem; line-height: 1.8; }
+    .hero-actions { display: flex; gap: 1rem; flex-wrap: wrap; }
+    .btn {
+      font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.08em;
+      padding: 12px 22px; border: none; cursor: pointer;
+      text-decoration: none; transition: all 0.2s;
+      display: inline-flex; align-items: center; gap: 0.5rem;
+    }
+    .btn-primary { background: var(--green); color: var(--bg); font-weight: 600; }
+    .btn-primary:hover { box-shadow: 0 0 24px var(--green-glow); }
+    .btn-ghost { background: transparent; color: var(--text); border: 1px solid var(--border); }
+    .btn-ghost:hover { border-color: var(--green); color: var(--green); }
+
+    /* TERMINAL */
+    .hero-right {
+      display: flex; align-items: center; justify-content: center;
+      padding: 5rem 4rem 5rem 2rem;
+      position: relative; z-index: 1;
+    }
+    .terminal {
+      width: 100%; max-width: 540px;
+      background: #020507;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      box-shadow: 0 0 60px rgba(0,0,0,0.8), 0 0 0 1px rgba(0,255,110,0.04);
+      overflow: hidden;
+    }
+    .term-bar {
+      display: flex; align-items: center; gap: 0.5rem;
+      padding: 10px 14px; background: #080d14;
+      border-bottom: 1px solid var(--border);
+    }
+    .dot { width: 10px; height: 10px; border-radius: 50%; }
+    .dot-r { background: #ff5f57; }
+    .dot-y { background: #febc2e; }
+    .dot-g { background: #28c840; }
+    .term-title { flex: 1; text-align: center; font-size: 11px; color: var(--text-dim); letter-spacing: 0.06em; }
+    .term-body { padding: 1.25rem 1.5rem; min-height: 340px; font-size: 12px; line-height: 1.8; }
+    .tl { display: block; }
+    .tc-prompt { color: var(--green); }
+    .tc-cmd    { color: var(--white); }
+    .tc-dim    { color: var(--text-dim); font-style: italic; }
+    .tc-key    { color: var(--amber); }
+    .tc-val    { color: var(--green); }
+    .tc-valr   { color: var(--red); }
+    .tc-valb   { color: var(--blue); }
+    .tc-plain  { color: var(--text); }
+    .cursor { display: inline-block; width: 7px; height: 14px; background: var(--green); vertical-align: middle; animation: blink 1s step-end infinite; margin-left: 2px; }
+    @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+
+    /* SECTIONS */
+    section { padding: 6rem 4rem; }
+    .inner { max-width: 1100px; margin: 0 auto; }
+    .sec-label {
+      font-size: 11px; color: var(--green); letter-spacing: 0.2em;
+      margin-bottom: 0.75rem;
+      display: flex; align-items: center; gap: 0.5rem;
+    }
+    .sec-label::before { content: '//'; color: var(--text-dim); }
+    .sec-title {
+      font-family: var(--font-disp);
+      font-size: clamp(2.5rem, 4vw, 4rem);
+      font-weight: 900; color: var(--white);
+      line-height: 1; margin-bottom: 1rem;
+    }
+    .sec-sub { font-size: 13px; color: var(--text-dim); max-width: 520px; margin-bottom: 3.5rem; line-height: 1.8; }
+
+    /* STATS BAR */
+    .stats-bar { background: var(--bg2); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 2.5rem 4rem; }
+    .stats-grid { max-width: 1100px; margin: 0 auto; display: grid; grid-template-columns: repeat(4, 1fr); }
+    .s-item { padding: 1rem 2rem; border-right: 1px solid var(--border); text-align: center; }
+    .s-item:first-child { border-left: 1px solid var(--border); }
+    .s-num { font-family: var(--font-disp); font-size: 3rem; font-weight: 900; line-height: 1; display: block; }
+    .s-num.g { color: var(--green); }
+    .s-num.r { color: var(--red); }
+    .s-num.a { color: var(--amber); }
+    .s-num.b { color: var(--blue); }
+    .s-desc { font-size: 11px; color: var(--text-dim); letter-spacing: 0.06em; margin-top: 0.25rem; }
+
+    /* PIPELINE */
+    .pipeline-wrap { background: var(--bg2); }
+    .pipeline {
+      display: grid; grid-template-columns: repeat(4, 1fr);
+      border: 1px solid var(--border);
+    }
+    .pipe-step {
+      padding: 2rem 1.5rem;
+      border-right: 1px solid var(--border);
+      position: relative; transition: background 0.2s; cursor: default;
+    }
+    .pipe-step:last-child { border-right: none; }
+    .pipe-step:hover { background: rgba(0,255,110,0.03); }
+    .pipe-step::after { content: '→'; position: absolute; right: -11px; top: 50%; transform: translateY(-50%); color: var(--text-dim); z-index: 2; }
+    .pipe-step:last-child::after { display: none; }
+    .pipe-num { font-family: var(--font-disp); font-size: 4rem; font-weight: 900; color: var(--border); line-height: 1; margin-bottom: 0.5rem; }
+    .pipe-step:hover .pipe-num { color: rgba(0,255,110,0.2); }
+    .pipe-name { font-family: var(--font-disp); font-size: 1.5rem; font-weight: 700; color: var(--green); margin-bottom: 0.75rem; }
+    .pipe-desc { font-size: 12px; color: var(--text-dim); line-height: 1.7; }
+    .pipe-tags { margin-top: 1rem; display: flex; flex-wrap: wrap; gap: 0.4rem; }
+    .pipe-tag { font-size: 10px; color: var(--green-dim); border: 1px solid rgba(0,184,77,0.3); padding: 2px 7px; letter-spacing: 0.05em; }
+    .formula-box {
+      margin-top: 2rem; padding: 1.5rem 2rem;
+      background: var(--panel); border: 1px solid var(--border); border-left: 3px solid var(--amber);
+    }
+    .formula-label { font-size: 11px; color: var(--amber); letter-spacing: 0.1em; margin-bottom: 0.75rem; }
+    .formula-text { font-family: var(--font-disp); font-size: 1.3rem; font-weight: 700; }
+    .formula-note { font-size: 11px; color: var(--text-dim); margin-top: 0.75rem; }
+
+    /* ARCH */
+    .arch-grid { display: grid; grid-template-columns: 1fr 1px 1fr; border: 1px solid var(--border); }
+    .arch-col { padding: 2.5rem; }
+    .arch-div { background: var(--border); }
+    .arch-col-title { font-size: 11px; color: var(--green); letter-spacing: 0.15em; margin-bottom: 1.5rem; }
+    .arch-svc {
+      display: flex; align-items: flex-start; gap: 1rem;
+      padding: 1rem; border: 1px solid var(--border);
+      margin-bottom: 0.75rem; transition: all 0.2s; cursor: default;
+    }
+    .arch-svc:hover { border-color: var(--green-dim); background: rgba(0,255,110,0.03); }
+    .arch-port { font-family: var(--font-disp); font-size: 1.3rem; font-weight: 700; color: var(--text-dim); min-width: 52px; line-height: 1; padding-top: 2px; }
+    .arch-svc:hover .arch-port { color: var(--green); }
+    .arch-svc-name { font-size: 13px; color: var(--white); margin-bottom: 0.25rem; }
+    .arch-svc-desc { font-size: 11px; color: var(--text-dim); line-height: 1.6; }
+    .arch-agents {
+      margin-top: 1.5rem; padding: 1rem;
+      background: rgba(0,255,110,0.03); border: 1px solid rgba(0,255,110,0.1);
+    }
+    .arch-agents-title { font-size: 10px; color: var(--green); letter-spacing: 0.1em; margin-bottom: 0.5rem; }
+    .arch-agents-body { font-size: 11px; color: var(--text-dim); line-height: 1.8; }
+    .arch-agents-body span { color: var(--amber); }
+
+    /* FAILURES */
+    .fail-grid {
+      display: grid; grid-template-columns: repeat(3, 1fr);
+      gap: 1px; background: var(--border); border: 1px solid var(--border);
+    }
+    .fail-card { background: var(--bg); padding: 2rem; transition: background 0.2s; cursor: default; }
+    .fail-card:hover { background: var(--panel); }
+    .fail-icon { font-size: 1.8rem; margin-bottom: 0.75rem; display: block; }
+    .fail-name { font-size: 13px; color: var(--green); letter-spacing: 0.05em; margin-bottom: 0.5rem; }
+    .fail-sev { display: inline-block; font-size: 10px; padding: 2px 8px; margin-bottom: 0.75rem; letter-spacing: 0.06em; }
+    .sev-c { background: rgba(255,36,64,0.15);  color: var(--red);   border: 1px solid rgba(255,36,64,0.3); }
+    .sev-h { background: rgba(255,204,0,0.1);   color: var(--amber); border: 1px solid rgba(255,204,0,0.3); }
+    .sev-m { background: rgba(0,170,255,0.1);   color: var(--blue);  border: 1px solid rgba(0,170,255,0.3); }
+    .fail-desc { font-size: 12px; color: var(--text-dim); line-height: 1.7; }
+    .fail-fix { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border); font-size: 11px; color: var(--text-dim); }
+    .fail-fix code { color: var(--amber); background: rgba(255,204,0,0.07); padding: 1px 5px; font-family: var(--font-mono); }
+
+    /* DEMO */
+    .demo-wrap { display: grid; grid-template-columns: 1fr 1fr; gap: 3rem; align-items: start; }
+    .demo-ctrl { padding: 2rem; border: 1px solid var(--border); }
+    .demo-lbl { font-size: 11px; color: var(--green); letter-spacing: 0.1em; margin-bottom: 1.5rem; }
+    .demo-field { margin-bottom: 1.25rem; }
+    .demo-field label { display: block; font-size: 11px; color: var(--text-dim); letter-spacing: 0.06em; margin-bottom: 0.4rem; }
+    .demo-field input, .demo-field select {
+      width: 100%; background: var(--bg); border: 1px solid var(--border);
+      color: var(--white); font-family: var(--font-mono); font-size: 13px;
+      padding: 10px 12px; outline: none; transition: border-color 0.2s; appearance: none;
+    }
+    .demo-field input:focus, .demo-field select:focus { border-color: var(--green); }
+    .demo-field select option { background: var(--bg2); }
+    .demo-run {
+      width: 100%; padding: 14px; font-family: var(--font-mono);
+      font-size: 13px; font-weight: 600; letter-spacing: 0.1em;
+      background: var(--green); color: var(--bg);
+      border: none; cursor: pointer; transition: all 0.2s; margin-top: 0.5rem;
+    }
+    .demo-run:hover { box-shadow: 0 0 30px var(--green-glow); }
+    .demo-run:disabled { opacity: 0.5; cursor: not-allowed; }
+    .demo-term { background: #020507; border: 1px solid var(--border); min-height: 380px; }
+    .demo-term-body { padding: 1.25rem 1.5rem; font-size: 12px; line-height: 1.8; min-height: 340px; }
+    .grav-box { margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid var(--border); }
+    .grav-title { font-size: 11px; color: var(--green); letter-spacing: 0.08em; margin-bottom: 0.75rem; }
+    .grav-row { font-size: 12px; margin-bottom: 4px; }
+    .grav-total { font-size: 13px; border-top: 1px solid var(--border); padding-top: 8px; margin-top: 8px; }
+
+    /* DEPLOY */
+    .deploy-tabs { display: flex; border-bottom: 1px solid var(--border); }
+    .dep-tab {
+      font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.06em;
+      padding: 10px 20px; background: transparent; color: var(--text-dim);
+      border: none; border-right: 1px solid var(--border); cursor: pointer; transition: all 0.15s;
+    }
+    .dep-tab.on { background: var(--panel); color: var(--green); border-bottom: 2px solid var(--green); margin-bottom: -1px; }
+    .dep-tab:hover:not(.on) { color: var(--text); }
+    .dep-panel { display: none; padding: 2rem; background: var(--panel); border: 1px solid var(--border); border-top: none; }
+    .dep-panel.on { display: block; }
+    .dep-step { font-size: 11px; color: var(--text-dim); margin-bottom: 0.4rem; letter-spacing: 0.04em; }
+    .dep-step strong { color: var(--white); }
+    .code-block {
+      background: #020507; border: 1px solid var(--border);
+      padding: 1.25rem 1.5rem; font-size: 12px; line-height: 1.8;
+      overflow-x: auto; position: relative; margin-bottom: 1rem;
+    }
+    .code-block code { color: var(--text); }
+    .c-cmd  { color: var(--white); }
+    .c-flag { color: var(--amber); }
+    .c-val  { color: var(--green); }
+    .c-cmt  { color: var(--text-dim); font-style: italic; }
+    .c-str  { color: var(--blue); }
+    .copy-btn {
+      position: absolute; top: 10px; right: 10px;
+      font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.06em;
+      padding: 4px 10px; background: transparent; border: 1px solid var(--border);
+      color: var(--text-dim); cursor: pointer; transition: all 0.15s;
+    }
+    .copy-btn:hover { border-color: var(--green); color: var(--green); }
+
+    /* FOOTER */
+    footer { background: var(--bg2); border-top: 1px solid var(--border); padding: 3rem 4rem; }
+    .footer-inner { max-width: 1100px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center; }
+    .footer-l { font-size: 12px; color: var(--text-dim); line-height: 1.8; }
+    .footer-l a { color: var(--green); text-decoration: none; }
+    .footer-l a:hover { text-decoration: underline; }
+    .footer-r { display: flex; gap: 1rem; }
+    .footer-link { font-size: 11px; color: var(--text-dim); text-decoration: none; border: 1px solid var(--border); padding: 8px 14px; transition: all 0.2s; letter-spacing: 0.06em; }
+    .footer-link:hover { border-color: var(--green); color: var(--green); }
+
+    /* SCROLL REVEAL */
+    .reveal { opacity: 0; transform: translateY(20px); transition: opacity 0.6s ease, transform 0.6s ease; }
+    .reveal.vis { opacity: 1; transform: translateY(0); }
+    .d1 { transition-delay: 0.1s; } .d2 { transition-delay: 0.2s; } .d3 { transition-delay: 0.3s; }
+
+    @keyframes glow-pulse {
+      0%, 100% { text-shadow: 0 0 8px rgba(0,255,110,0.4); }
+      50%       { text-shadow: 0 0 20px rgba(0,255,110,0.8), 0 0 40px rgba(0,255,110,0.3); }
+    }
+    .glow { animation: glow-pulse 3s ease-in-out infinite; }
+
+    @media (max-width: 900px) {
+      .hero { grid-template-columns: 1fr; } .hero-right { display: none; }
+      .hero-left { padding: 4rem 2rem; }
+      section { padding: 4rem 1.5rem; }
+      .stats-grid { grid-template-columns: repeat(2, 1fr); }
+      .pipeline { grid-template-columns: 1fr 1fr; }
+      .fail-grid { grid-template-columns: 1fr 1fr; }
+      .demo-wrap { grid-template-columns: 1fr; }
+      .arch-grid { grid-template-columns: 1fr; } .arch-div { height: 1px; }
+      footer { padding: 2rem 1.5rem; }
+      .footer-inner { flex-direction: column; gap: 1.5rem; align-items: flex-start; }
+      nav { padding: 0 1rem; } .stats-bar { padding: 2rem 1.5rem; }
+      .pipe-step::after { display: none; }
+    }
+    @media (max-width: 600px) {
+      .fail-grid { grid-template-columns: 1fr; }
+      .pipeline { grid-template-columns: 1fr; }
+      .stats-grid { grid-template-columns: 1fr 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a href="#" class="nav-logo">k8s<span>-</span>log<span>-</span>intelligence</a>
+  <div class="nav-links">
+    <a href="#how-it-works">how it works</a>
+    <a href="#failures">failures</a>
+    <a href="#demo">demo</a>
+    <a href="#deploy">deploy</a>
+    <a href="https://github.com/Akshay007724/k8s-log-intelligence" target="_blank" rel="noopener" class="nav-btn">GitHub →</a>
+  </div>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-bg"></div>
+  <div class="hero-grid"></div>
+  <div class="hero-left">
+    <div class="hero-eyebrow">SRE · PLATFORM ENGINEERING · AI SYSTEMS</div>
+    <h1 class="hero-title">
+      <span class="accent glow">K8s</span> Log<br>
+      <span class="accent">Intel</span>ligence
+      <span class="dim">& Failure<br>Resolution</span>
+    </h1>
+    <div class="hero-stat">
+      <div><div class="stat-big red">60m</div><div class="stat-lbl">avg incident time</div></div>
+      <span class="stat-arrow">→</span>
+      <div><div class="stat-big green">&lt;2s</div><div class="stat-lbl">with this system</div></div>
+    </div>
+    <p class="hero-desc">
+      K-Agent orchestrator that diagnoses Kubernetes pod failures —
+      OOMKilled, CrashLoopBackOff, dependency timeouts — and returns
+      an actionable fix in under 2 seconds. No more reading 50,000 log lines at 3am.
+    </p>
+    <div class="hero-actions">
+      <a href="#demo" class="btn btn-primary">▶ Run Demo</a>
+      <a href="https://github.com/Akshay007724/k8s-log-intelligence" target="_blank" rel="noopener" class="btn btn-ghost">View Source →</a>
+    </div>
+  </div>
+  <div class="hero-right">
+    <div class="terminal">
+      <div class="term-bar">
+        <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
+        <div class="term-title">context-weaver — live diagnosis</div>
+      </div>
+      <div class="term-body" id="hero-terminal"></div>
+    </div>
+  </div>
+</section>
+
+<!-- STATS -->
+<div class="stats-bar">
+  <div class="stats-grid">
+    <div class="s-item reveal"><span class="s-num g">&lt;2s</span><div class="s-desc">diagnosis time</div></div>
+    <div class="s-item reveal d1"><span class="s-num r">5</span><div class="s-desc">failure types detected</div></div>
+    <div class="s-item reveal d2"><span class="s-num a">3</span><div class="s-desc">max MCP tool calls</div></div>
+    <div class="s-item reveal d3"><span class="s-num b">24</span><div class="s-desc">tests, 0 failures</div></div>
+  </div>
+</div>
+
+<!-- HOW IT WORKS -->
+<section class="pipeline-wrap" id="how-it-works">
+  <div class="inner">
+    <div class="sec-label">how it works</div>
+    <h2 class="sec-title reveal">The K-Agent Loop</h2>
+    <p class="sec-sub reveal">A THINK→ACT→OBSERVE→DECIDE cycle on each request. The brain calls at most 3 MCP tools, compresses responses into context shards, and routes to specialized sub-agents.</p>
+    <div class="pipeline reveal">
+      <div class="pipe-step">
+        <div class="pipe-num">01</div>
+        <div class="pipe-name">THINK</div>
+        <div class="pipe-desc">Decides which data sources to query. Cold start always fetches pod status + logs. High severity adds metrics.</div>
+        <div class="pipe-tags"><span class="pipe-tag">state-aware</span><span class="pipe-tag">lazy eval</span></div>
+      </div>
+      <div class="pipe-step">
+        <div class="pipe-num">02</div>
+        <div class="pipe-name">ACT</div>
+        <div class="pipe-desc">Fires MCP tool calls in parallel via asyncio.gather. Enforced at ≤3 total calls per diagnosis. 1.5s per-call timeout.</div>
+        <div class="pipe-tags"><span class="pipe-tag">async</span><span class="pipe-tag">parallel</span><span class="pipe-tag">≤3 calls</span></div>
+      </div>
+      <div class="pipe-step">
+        <div class="pipe-num">03</div>
+        <div class="pipe-name">OBSERVE</div>
+        <div class="pipe-desc">Receives compressed ContextShard responses ≤120 tokens each. Never raw logs. Never raw Kubernetes JSON.</div>
+        <div class="pipe-tags"><span class="pipe-tag">≤120 tokens</span><span class="pipe-tag">structured</span></div>
+      </div>
+      <div class="pipe-step">
+        <div class="pipe-num">04</div>
+        <div class="pipe-name">DECIDE</div>
+        <div class="pipe-desc">Computes failure gravity score. Routes to rule-based sub-agents for classification and fix generation.</div>
+        <div class="pipe-tags"><span class="pipe-tag">gravity model</span><span class="pipe-tag">rule-based</span></div>
+      </div>
+    </div>
+    <div class="formula-box reveal">
+      <div class="formula-label">FAILURE GRAVITY FORMULA</div>
+      <div class="formula-text">
+        Gravity =
+        <span style="color:var(--green)">recency</span> × 0.35 +
+        <span style="color:var(--blue)">restarts</span> × 0.25 +
+        <span style="color:var(--red)">severity</span> × 0.25 +
+        <span style="color:var(--amber)">blast_radius</span> × 0.15
+      </div>
+      <div class="formula-note">Issues surface only when gravity &gt; 0.65 — filters noise, surfaces signal.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ARCHITECTURE -->
+<section style="background:var(--bg)">
+  <div class="inner">
+    <div class="sec-label">architecture</div>
+    <h2 class="sec-title reveal">Four Services, One Answer</h2>
+    <p class="sec-sub reveal">All services run as independent FastAPI apps inside the cluster, connected via cluster-internal DNS. RBAC is strictly read-only.</p>
+    <div class="arch-grid reveal">
+      <div class="arch-col">
+        <div class="arch-col-title">ORCHESTRATION LAYER</div>
+        <div class="arch-svc">
+          <div class="arch-port">:8000</div>
+          <div>
+            <div class="arch-svc-name">context-weaver</div>
+            <div class="arch-svc-desc">K-Agent brain. Runs the THINK→ACT→OBSERVE→DECIDE loop. Exposes POST /diagnose and GET /health with 2s timeout guard.</div>
+          </div>
+        </div>
+        <div class="arch-agents">
+          <div class="arch-agents-title">SUB-AGENTS (sync, in-process)</div>
+          <div class="arch-agents-body">
+            <span>log_analysis_agent</span> — compresses shards to signal string<br>
+            <span>failure_classification_agent</span> — regex rule classifier<br>
+            <span>root_cause_agent</span> — builds IncidentReport
+          </div>
+        </div>
+      </div>
+      <div class="arch-div"></div>
+      <div class="arch-col">
+        <div class="arch-col-title">MCP SERVER LAYER</div>
+        <div class="arch-svc">
+          <div class="arch-port">:8001</div>
+          <div>
+            <div class="arch-svc-name">mcp-k8s-server</div>
+            <div class="arch-svc-desc">Pod status, restart counts, warning events, deployment generation diff via kubernetes-asyncio.</div>
+          </div>
+        </div>
+        <div class="arch-svc">
+          <div class="arch-port">:8002</div>
+          <div>
+            <div class="arch-svc-name">mcp-logs-server</div>
+            <div class="arch-svc-desc">Fetches last 100 lines, compresses via regex pattern clustering. Returns error counts and entity extraction.</div>
+          </div>
+        </div>
+        <div class="arch-svc">
+          <div class="arch-port">:8003</div>
+          <div>
+            <div class="arch-svc-name">mcp-metrics-server</div>
+            <div class="arch-svc-desc">Queries metrics.k8s.io for CPU and memory ratios. Flags OOM-imminent (&gt;95%) at severity 0.95.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FAILURE TYPES -->
+<section style="background:var(--bg2)" id="failures">
+  <div class="inner">
+    <div class="sec-label">failure types</div>
+    <h2 class="sec-title reveal">What It Detects</h2>
+    <p class="sec-sub reveal">Six classified failure modes. Each returns the exact kubectl commands to run.</p>
+    <div class="fail-grid">
+      <div class="fail-card reveal">
+        <span class="fail-icon">💀</span>
+        <div class="fail-name">OOMKilled</div>
+        <span class="fail-sev sev-c">CRITICAL</span>
+        <div class="fail-desc">Container exceeded its memory limit. Kernel OOMKiller terminates it, causing exit code 137.</div>
+        <div class="fail-fix">Fix: <code>kubectl set resources deployment/{svc} --limits=memory=512Mi</code></div>
+      </div>
+      <div class="fail-card reveal d1">
+        <span class="fail-icon">🔄</span>
+        <div class="fail-name">CrashLoopBackOff</div>
+        <span class="fail-sev sev-c">CRITICAL</span>
+        <div class="fail-desc">Pod crashing repeatedly on startup. Usually bad config, missing secret, or unready dependency.</div>
+        <div class="fail-fix">Fix: <code>kubectl logs {svc} --previous</code> then verify ConfigMap/Secret.</div>
+      </div>
+      <div class="fail-card reveal d2">
+        <span class="fail-icon">🖼️</span>
+        <div class="fail-name">ImagePullBackOff</div>
+        <span class="fail-sev sev-h">HIGH</span>
+        <div class="fail-desc">Container image cannot be pulled. Tag missing, registry unreachable, or imagePullSecret invalid.</div>
+        <div class="fail-fix">Fix: <code>kubectl describe pod -l app={svc}</code> to inspect registry auth.</div>
+      </div>
+      <div class="fail-card reveal">
+        <span class="fail-icon">🔌</span>
+        <div class="fail-name">DependencyTimeout</div>
+        <span class="fail-sev sev-h">HIGH</span>
+        <div class="fail-desc">ECONNREFUSED or timeout connecting to downstream service — DB, cache, message queue, or external API.</div>
+        <div class="fail-fix">Fix: <code>nc -zv &lt;host&gt; &lt;port&gt;</code> from within the pod.</div>
+      </div>
+      <div class="fail-card reveal d1">
+        <span class="fail-icon">📉</span>
+        <div class="fail-name">DeploymentRegression</div>
+        <span class="fail-sev sev-h">HIGH</span>
+        <div class="fail-desc">Recent rollout broke pod availability. Generation mismatch or available replicas below desired count.</div>
+        <div class="fail-fix">Fix: <code>kubectl rollout undo deployment/{svc}</code></div>
+      </div>
+      <div class="fail-card reveal d2">
+        <span class="fail-icon">❓</span>
+        <div class="fail-name">Unknown</div>
+        <span class="fail-sev sev-m">LOW</span>
+        <div class="fail-desc">Gravity below threshold or signal doesn't match known patterns. System healthy, or needs manual inspection.</div>
+        <div class="fail-fix">Fix: <code>kubectl describe pod -l app={svc}</code></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- DEMO -->
+<section style="background:var(--bg)" id="demo">
+  <div class="inner">
+    <div class="sec-label">interactive demo</div>
+    <h2 class="sec-title reveal">Try It Live</h2>
+    <p class="sec-sub reveal">Select a failure scenario and run a simulated diagnosis. Mirrors real system output — including gravity scoring.</p>
+    <div class="demo-wrap reveal">
+      <div class="demo-ctrl">
+        <div class="demo-lbl">// CONFIGURE DIAGNOSIS</div>
+        <div class="demo-field">
+          <label>SERVICE NAME</label>
+          <input type="text" id="d-svc" value="payment-svc" maxlength="63" />
+        </div>
+        <div class="demo-field">
+          <label>NAMESPACE</label>
+          <input type="text" id="d-ns" value="production" maxlength="63" />
+        </div>
+        <div class="demo-field">
+          <label>SIMULATE FAILURE TYPE</label>
+          <select id="d-scenario">
+            <option value="oom">OOMKilled — memory limit exceeded</option>
+            <option value="dep">DependencyTimeout — Redis unreachable</option>
+            <option value="image">ImagePullBackOff — image not found</option>
+            <option value="crash">CrashLoopBackOff — bad config</option>
+            <option value="rollout">DeploymentRegression — rollout failed</option>
+          </select>
+        </div>
+        <button class="demo-run" id="d-btn" onclick="runDemo()">▶ RUN DIAGNOSIS</button>
+        <div class="grav-box">
+          <div class="grav-title">// GRAVITY COMPONENTS</div>
+          <div id="grav-display" style="font-size:12px; color:var(--text-dim)">Select a scenario and run to see gravity score.</div>
+        </div>
+      </div>
+      <div class="demo-term">
+        <div class="term-bar">
+          <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
+          <div class="term-title">POST /diagnose → IncidentReport</div>
+        </div>
+        <div class="demo-term-body" id="d-out"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- DEPLOY -->
+<section style="background:var(--bg2)" id="deploy">
+  <div class="inner">
+    <div class="sec-label">deployment</div>
+    <h2 class="sec-title reveal">Run It Anywhere</h2>
+    <p class="sec-sub reveal">Three deployment options — local Python, Docker Compose, or full Kubernetes cluster.</p>
+    <div class="reveal">
+      <div class="deploy-tabs">
+        <button class="dep-tab on" data-tab="docker" onclick="switchTab(this,'docker')">Docker Compose</button>
+        <button class="dep-tab" data-tab="python" onclick="switchTab(this,'python')">Local Python</button>
+        <button class="dep-tab" data-tab="k8s" onclick="switchTab(this,'k8s')">Kubernetes</button>
+      </div>
+      <div class="dep-panel on" id="tab-docker">
+        <div class="dep-step"><strong>Step 1</strong> — Clone and configure</div>
+        <div class="code-block"><button class="copy-btn" onclick="copyCode(this)">copy</button><code>
+<span class="c-cmd">git clone</span> <span class="c-val">https://github.com/Akshay007724/k8s-log-intelligence.git</span><br>
+<span class="c-cmd">cd</span> k8s-log-intelligence<br>
+<span class="c-cmd">cp</span> .env.example .env
+</code></div>
+        <div class="dep-step"><strong>Step 2</strong> — Start all services</div>
+        <div class="code-block"><button class="copy-btn" onclick="copyCode(this)">copy</button><code>
+<span class="c-cmd">docker compose up</span> <span class="c-flag">--build</span>
+</code></div>
+        <div class="dep-step"><strong>Step 3</strong> — Diagnose a pod</div>
+        <div class="code-block"><button class="copy-btn" onclick="copyCode(this)">copy</button><code>
+<span class="c-cmd">curl</span> <span class="c-flag">-s -X POST</span> http://localhost:8000/diagnose \<br>
+&nbsp;&nbsp;<span class="c-flag">-H</span> <span class="c-str">"Content-Type: application/json"</span> \<br>
+&nbsp;&nbsp;<span class="c-flag">-d</span> <span class="c-str">'{"service":"payment-svc","namespace":"production"}'</span> \<br>
+&nbsp;&nbsp;| python3 -m json.tool
+</code></div>
+      </div>
+      <div class="dep-panel" id="tab-python">
+        <div class="dep-step"><strong>Step 1</strong> — Install dependencies</div>
+        <div class="code-block"><button class="copy-btn" onclick="copyCode(this)">copy</button><code>
+<span class="c-cmd">pip install</span> <span class="c-flag">-r</span> requirements.txt
+</code></div>
+        <div class="dep-step"><strong>Step 2</strong> — Start MCP servers (3 terminals)</div>
+        <div class="code-block"><button class="copy-btn" onclick="copyCode(this)">copy</button><code>
+<span class="c-cmt"># Terminal 1</span><br>
+IN_CLUSTER=false <span class="c-cmd">python3 -m uvicorn</span> src.mcp_k8s_server:app <span class="c-flag">--port</span> <span class="c-val">8001</span><br><br>
+<span class="c-cmt"># Terminal 2</span><br>
+IN_CLUSTER=false <span class="c-cmd">python3 -m uvicorn</span> src.mcp_logs_server:app <span class="c-flag">--port</span> <span class="c-val">8002</span><br><br>
+<span class="c-cmt"># Terminal 3</span><br>
+IN_CLUSTER=false <span class="c-cmd">python3 -m uvicorn</span> src.mcp_metrics_server:app <span class="c-flag">--port</span> <span class="c-val">8003</span>
+</code></div>
+        <div class="dep-step"><strong>Step 3</strong> — Start the brain</div>
+        <div class="code-block"><button class="copy-btn" onclick="copyCode(this)">copy</button><code>
+IN_CLUSTER=false MCP_K8S_URL=http://localhost:8001 \<br>
+MCP_LOGS_URL=http://localhost:8002 \<br>
+MCP_METRICS_URL=http://localhost:8003 \<br>
+<span class="c-cmd">python3 -m uvicorn</span> src.context_weaver:app <span class="c-flag">--port</span> <span class="c-val">8000</span>
+</code></div>
+      </div>
+      <div class="dep-panel" id="tab-k8s">
+        <div class="dep-step"><strong>Step 1</strong> — Namespace and secret</div>
+        <div class="code-block"><button class="copy-btn" onclick="copyCode(this)">copy</button><code>
+<span class="c-cmd">kubectl create namespace</span> <span class="c-val">monitoring</span><br>
+<span class="c-cmd">kubectl create secret generic</span> k8s-log-intelligence-secrets \<br>
+&nbsp;&nbsp;<span class="c-flag">--from-literal</span>=<span class="c-val">anthropic_api_key=YOUR_KEY</span> <span class="c-flag">-n</span> monitoring
+</code></div>
+        <div class="dep-step"><strong>Step 2</strong> — Build and push image</div>
+        <div class="code-block"><button class="copy-btn" onclick="copyCode(this)">copy</button><code>
+<span class="c-cmd">docker build</span> <span class="c-flag">-t</span> <span class="c-val">YOUR_REGISTRY/k8s-log-intelligence:latest</span> .<br>
+<span class="c-cmd">docker push</span> <span class="c-val">YOUR_REGISTRY/k8s-log-intelligence:latest</span>
+</code></div>
+        <div class="dep-step"><strong>Step 3</strong> — Deploy to cluster</div>
+        <div class="code-block"><button class="copy-btn" onclick="copyCode(this)">copy</button><code>
+<span class="c-cmd">kubectl apply</span> <span class="c-flag">-f</span> kubernetes/<br>
+<span class="c-cmd">kubectl rollout status</span> deployment/context-weaver <span class="c-flag">-n</span> monitoring
+</code></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-l">
+      <div style="color:var(--green);font-size:13px;margin-bottom:0.4rem">k8s-log-intelligence</div>
+      Python 3.12 · FastAPI · Pydantic v2 · kubernetes-asyncio · Docker · Kubernetes<br>
+      <a href="https://github.com/Akshay007724/k8s-log-intelligence" target="_blank" rel="noopener">github.com/Akshay007724/k8s-log-intelligence</a>
+    </div>
+    <div class="footer-r">
+      <a href="https://github.com/Akshay007724/k8s-log-intelligence" target="_blank" rel="noopener" class="footer-link">GitHub →</a>
+      <a href="https://github.com/Akshay007724/k8s-log-intelligence/blob/main/README.md" target="_blank" rel="noopener" class="footer-link">README →</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+/* ───────────────────────────────────────────────
+   SAFE DOM HELPERS
+   All user-derived text goes through setText / createEl.
+   innerHTML is used only for static, developer-controlled markup.
+─────────────────────────────────────────────── */
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function makeSpan(cls, text) {
+  const s = document.createElement('span');
+  s.className = cls;
+  s.textContent = text;
+  return s;
+}
+
+function makeLine(children) {
+  const row = document.createElement('span');
+  row.className = 'tl';
+  children.forEach(c => row.appendChild(typeof c === 'string' ? document.createTextNode(c) : c));
+  return row;
+}
+
+/* ── HERO TERMINAL ──────────────────────────────── */
+function buildHeroTerminal() {
+  const el = document.getElementById('hero-terminal');
+  const lines = [
+    () => makeLine([makeSpan('tc-prompt','❯ '), makeSpan('tc-cmd','curl -X POST localhost:8000/diagnose \\')]),
+    () => makeLine([makeSpan('tc-cmd',"    -d '{\"service\":\"payment-svc\",\"namespace\":\"prod\"}'")]),
+    () => { const r = document.createElement('span'); r.className='tl'; r.innerHTML='&nbsp;'; return r; },
+    () => makeLine([makeSpan('tc-dim','// THINK: cold start → 2 MCP calls queued')]),
+    () => makeLine([makeSpan('tc-dim','// ACT:   asyncio.gather([k8s, logs])')]),
+    () => makeLine([makeSpan('tc-dim','// OBSERVE: shards received, max_sev=0.92')]),
+    () => makeLine([makeSpan('tc-dim','// DECIDE: gravity=0.87 > 0.65 → classify')]),
+    () => { const r = document.createElement('span'); r.className='tl'; r.innerHTML='&nbsp;'; return r; },
+    () => makeLine([makeSpan('tc-dim','{')]),
+    () => makeLine([makeSpan('tc-key','  "issue_type"'), makeSpan('tc-plain',': '), makeSpan('tc-valr','"OOMKilled"')]),
+    () => makeLine([makeSpan('tc-key','  "root_cause"'), makeSpan('tc-plain',': '), makeSpan('tc-plain','"payment-svc exceeded memory limit"')]),
+    () => makeLine([makeSpan('tc-key','  "confidence"'), makeSpan('tc-plain',': '), makeSpan('tc-val','"0.92"')]),
+    () => makeLine([makeSpan('tc-key','  "suggested_fix"'), makeSpan('tc-plain',': '), makeSpan('tc-valb','"kubectl set resources deployment/payment-svc..."')]),
+    () => makeLine([makeSpan('tc-dim','}')]),
+  ];
+  el.style.opacity = '0';
+  lines.forEach(fn => el.appendChild(fn()));
+  const cur = document.createElement('span');
+  cur.className = 'tl';
+  cur.appendChild(document.createElement('span')).className = 'cursor';
+  el.lastChild.className = 'cursor';
+  const curLine = document.createElement('span');
+  curLine.className = 'tl';
+  const cursor = document.createElement('span');
+  cursor.className = 'cursor';
+  curLine.appendChild(cursor);
+  el.appendChild(curLine);
+  setTimeout(() => { el.style.transition = 'opacity 0.8s ease'; el.style.opacity = '1'; }, 400);
+}
+buildHeroTerminal();
+
+/* ── DEMO SCENARIOS ──────────────────────────────── */
+const SCENARIOS = {
+  oom: {
+    g: { recency:1.0, restarts:0.92, severity:0.92, blast:1.0, score:0.87 },
+    issue:'OOMKilled',
+    cause:'{svc} exceeded its memory limit and was killed by the kernel (OOMKiller).',
+    confidence:0.92,
+    evidence:['phase=Running restarts=9 reason=OOMKilled','Log errors: OOMKilledx9, memory 97%','Memory high 97% OOM imminent'],
+    fix:'kubectl set resources deployment/{svc} --limits=memory=512Mi -n {ns}'
+  },
+  dep: {
+    g:{ recency:1.0, restarts:0.75, severity:0.85, blast:0.5, score:0.74 },
+    issue:'DependencyTimeout',
+    cause:'{svc} cannot reach a required dependency. Involved: redis:6379.',
+    confidence:0.85,
+    evidence:['ECONNREFUSED redis:6379 connection refused 12x','phase=Running restarts=5'],
+    fix:'kubectl exec -it <pod> -- nc -zv redis 6379. If post-deploy: kubectl rollout undo deployment/{svc} -n {ns}'
+  },
+  image: {
+    g:{ recency:1.0, restarts:0.88, severity:0.90, blast:0.5, score:0.83 },
+    issue:'ImagePullBackOff',
+    cause:'Container image for {svc} cannot be pulled; tag missing or registry auth failed.',
+    confidence:0.90,
+    evidence:['ImagePullBackOff ErrImagePull registry.io/{svc}:v2.3','Log errors: ImagePullBackOffx3'],
+    fix:'kubectl describe pod -l app={svc} -n {ns}. Fix imagePullSecret or correct image tag.'
+  },
+  crash: {
+    g:{ recency:1.0, restarts:0.80, severity:0.85, blast:0.5, score:0.77 },
+    issue:'CrashLoopBackOff',
+    cause:'{svc} is crashing on startup repeatedly; likely bad config or unmet dependency.',
+    confidence:0.80,
+    evidence:['CrashLoopBackOff restarts=6','Log errors: CrashLoopBackOffx6'],
+    fix:'kubectl logs {svc} -n {ns} --previous. Verify ConfigMap/Secret. Roll back: kubectl rollout undo deployment/{svc} -n {ns}'
+  },
+  rollout: {
+    g:{ recency:1.0, restarts:0.70, severity:0.80, blast:0.67, score:0.75 },
+    issue:'DeploymentRegression',
+    cause:'A recent deployment of {svc} broke availability; pods not reaching ready state.',
+    confidence:0.80,
+    evidence:['{svc} gen=4 observed=3 available=1/3 — possible rollout issue','Warning: BackOff restarting failed container'],
+    fix:'kubectl rollout undo deployment/{svc} -n {ns}'
+  }
+};
+
+function fill(s, svc, ns) {
+  return s.replace(/\{svc\}/g, svc).replace(/\{ns\}/g, ns);
+}
+
+async function runDemo() {
+  // Sanitize inputs by using textContent (never eval'd as HTML)
+  const rawSvc = document.getElementById('d-svc').value.trim() || 'my-svc';
+  const rawNs  = document.getElementById('d-ns').value.trim() || 'default';
+  // Only allow valid K8s DNS label chars
+  const svc = rawSvc.replace(/[^a-z0-9\-]/gi,'').slice(0,63) || 'my-svc';
+  const ns  = rawNs.replace(/[^a-z0-9\-]/gi,'').slice(0,63) || 'default';
+
+  const key = document.getElementById('d-scenario').value;
+  const sc  = SCENARIOS[key];
+  const btn = document.getElementById('d-btn');
+  const out = document.getElementById('d-out');
+  btn.disabled = true;
+  btn.textContent = '⟳ RUNNING...';
+  out.textContent = '';
+
+  const steps = [
+    { ms:0,    fn: () => makeLine([makeSpan('tc-dim', '$ curl -X POST localhost:8000/diagnose \\')])},
+    { ms:80,   fn: () => makeLine([makeSpan('tc-dim', `    -d '{"service":"${svc}","namespace":"${ns}"}'`)])},
+    { ms:160,  fn: () => makeLine([document.createTextNode('')])},
+    { ms:300,  fn: () => makeLine([makeSpan('tc-dim','// THINK → cold start: k8s/get_pod_status, logs/get_logs_summary')])},
+    { ms:700,  fn: () => makeLine([makeSpan('tc-dim',`// ACT   → asyncio.gather done in 0.${Math.floor(Math.random()*4+3)}s`)])},
+    { ms:900,  fn: () => makeLine([makeSpan('tc-dim',`// OBSERVE → max_sev=${sc.g.severity}`)])},
+    { ms:1100, fn: () => makeLine([makeSpan('tc-dim',`// DECIDE  → gravity=${sc.g.score} > 0.65 → surfacing`)])},
+    { ms:1300, fn: () => makeLine([document.createTextNode('')])},
+    { ms:1400, fn: () => makeLine([makeSpan('tc-dim','{')])},
+    { ms:1500, fn: () => {
+      const issueColor = sc.issue === 'Unknown' ? 'tc-valb' : 'tc-valr';
+      return makeLine([makeSpan('tc-key','  "issue_type"'), makeSpan('tc-plain',': '), makeSpan(issueColor,`"${sc.issue}"`)]);
+    }},
+    { ms:1620, fn: () => makeLine([makeSpan('tc-key','  "root_cause"'), makeSpan('tc-plain',': '), makeSpan('tc-plain',`"${fill(sc.cause,svc,ns)}"`) ])},
+    { ms:1740, fn: () => makeLine([makeSpan('tc-key','  "confidence"'), makeSpan('tc-plain',': '), makeSpan('tc-val', String(sc.confidence))])},
+    ...sc.evidence.map((ev, i) => ({
+      ms: 1860 + i*120,
+      fn: () => makeLine([makeSpan('tc-key',`  "evidence[${i}]"`), makeSpan('tc-plain',': '), makeSpan('tc-plain', `"${fill(ev,svc,ns)}"`) ])
+    })),
+    { ms:2100, fn: () => makeLine([makeSpan('tc-key','  "suggested_fix"'), makeSpan('tc-plain',': '), makeSpan('tc-valb',`"${fill(sc.fix,svc,ns)}"`) ])},
+    { ms:2220, fn: () => makeLine([makeSpan('tc-dim','}')])},
+    { ms:2300, fn: () => makeLine([document.createTextNode('')])},
+    { ms:2350, fn: () => makeLine([makeSpan('tc-val',`// ✓ ${sc.issue} detected. Confidence: ${sc.confidence}`)])}
+  ];
+
+  for (const step of steps) {
+    await sleep(step.ms);
+    out.appendChild(step.fn());
+    out.scrollTop = out.scrollHeight;
+  }
+
+  // append cursor
+  const curLine = document.createElement('span');
+  curLine.className = 'tl';
+  const cur = document.createElement('span');
+  cur.className = 'cursor';
+  curLine.appendChild(cur);
+  out.appendChild(curLine);
+
+  // update gravity display using safe DOM
+  const gd = document.getElementById('grav-display');
+  gd.textContent = '';
+  const g = sc.g;
+  const rows = [
+    { label:'recency',     color:'var(--green)', val:g.recency,   w:0.35 },
+    { label:'restarts',    color:'var(--blue)',  val:g.restarts,  w:0.25 },
+    { label:'severity',    color:'var(--red)',   val:g.severity,  w:0.25 },
+    { label:'blast_radius',color:'var(--amber)', val:g.blast,     w:0.15 },
+  ];
+  rows.forEach(row => {
+    const div = document.createElement('div');
+    div.className = 'grav-row';
+    const labelSpan = document.createElement('span');
+    labelSpan.style.color = row.color;
+    labelSpan.textContent = row.label;
+    const rest = document.createTextNode(` ${row.val} × ${row.w} = ${(row.val*row.w).toFixed(3)}`);
+    div.appendChild(labelSpan);
+    div.appendChild(rest);
+    gd.appendChild(div);
+  });
+  const total = document.createElement('div');
+  total.className = 'grav-total';
+  const label = document.createTextNode('Gravity = ');
+  const scoreSpan = document.createElement('span');
+  scoreSpan.style.cssText = 'color:var(--green);font-family:var(--font-disp);font-size:1.2rem;font-weight:700';
+  scoreSpan.textContent = String(g.score);
+  const suffix = document.createTextNode(' > 0.65 ✓ surfaced');
+  total.appendChild(label);
+  total.appendChild(scoreSpan);
+  total.appendChild(suffix);
+  gd.appendChild(total);
+
+  btn.disabled = false;
+  btn.textContent = '▶ RUN AGAIN';
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+/* ── TABS ────────────────────────────────────────── */
+function switchTab(btn, name) {
+  document.querySelectorAll('.dep-tab').forEach(t => t.classList.remove('on'));
+  document.querySelectorAll('.dep-panel').forEach(p => p.classList.remove('on'));
+  btn.classList.add('on');
+  document.getElementById('tab-' + name).classList.add('on');
+}
+
+/* ── COPY ────────────────────────────────────────── */
+function copyCode(btn) {
+  const block = btn.parentElement;
+  const text = block.innerText.replace(/^copy\n/,'').trim();
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = 'copied!';
+    btn.style.color = 'var(--green)';
+    btn.style.borderColor = 'var(--green)';
+    setTimeout(() => { btn.textContent = 'copy'; btn.style.color = ''; btn.style.borderColor = ''; }, 1600);
+  });
+}
+
+/* ── SCROLL REVEAL ───────────────────────────────── */
+const io = new IntersectionObserver(entries => {
+  entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('vis'); io.unobserve(e.target); }});
+}, { threshold: 0.1 });
+document.querySelectorAll('.reveal').forEach(el => io.observe(el));
+
+/* ── INIT DEMO OUTPUT ────────────────────────────── */
+(function initDemoOutput() {
+  const out = document.getElementById('d-out');
+  const hints = [
+    '// Ready. Configure and run diagnosis above.',
+    '//',
+    '// The system will:',
+    '//  1. Call mcp-k8s-server for pod status',
+    '//  2. Call mcp-logs-server for error patterns',
+    '//  3. Score failure gravity',
+    '//  4. Return IncidentReport ≤200 tokens',
+  ];
+  hints.forEach(h => {
+    const span = document.createElement('span');
+    span.className = 'tl tc-dim';
+    span.textContent = h;
+    out.appendChild(span);
+  });
+  const blank = document.createElement('span');
+  blank.className = 'tl';
+  blank.textContent = ' ';
+  out.appendChild(blank);
+  const curLine = document.createElement('span');
+  curLine.className = 'tl';
+  const cur = document.createElement('span');
+  cur.className = 'cursor';
+  curLine.appendChild(cur);
+  out.appendChild(curLine);
+})();
+</script>
+</body>
+</html>
