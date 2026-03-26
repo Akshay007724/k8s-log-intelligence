@@ -9,6 +9,8 @@ FROM python:3.12-slim AS runtime
 WORKDIR /app
 COPY --from=builder /install /usr/local
 COPY src/ ./src/
+RUN adduser --disabled-password --gecos '' appuser
+USER appuser
 ENV PYTHONPATH=/app
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1

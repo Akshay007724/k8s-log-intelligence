@@ -1,4 +1,5 @@
-from pydantic import BaseModel, Field
+import re as _re
+from pydantic import BaseModel, Field, field_validator
 from typing import Literal
 
 class ContextShard(BaseModel):
@@ -10,6 +11,15 @@ class ContextShard(BaseModel):
 class FailureQuery(BaseModel):
     service: str
     namespace: str
+
+    @field_validator("service", "namespace")
+    @classmethod
+    def validate_k8s_name(cls, v: str) -> str:
+        if not _re.match(r'^[a-z0-9]([a-z0-9\-]*[a-z0-9])?$', v) or len(v) > 63:
+            raise ValueError(
+                "Must be a valid Kubernetes DNS label (lowercase alphanumeric and hyphens)"
+            )
+        return v
 
 class IncidentReport(BaseModel):
     issue_type: Literal[

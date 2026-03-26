@@ -3,7 +3,10 @@ context-weaver-brain: K-Agent orchestrator.
 THINK → ACT (≤3 MCP calls) → OBSERVE → DECIDE
 """
 import asyncio
+import logging
 from typing import Literal
+
+logger = logging.getLogger(__name__)
 import httpx
 from fastapi import FastAPI
 from src.models import AgentState, ContextShard, FailureQuery, IncidentReport
@@ -87,6 +90,8 @@ class ContextWeaverBrain:
             for shard in shards:
                 if isinstance(shard, ContextShard):
                     state.shards.append(shard)
+                elif isinstance(shard, Exception):
+                    logger.warning("MCP tool call failed: %s", shard)
             state.tool_calls_used += len(tools_to_call)
 
         # DECIDE
@@ -103,11 +108,16 @@ class ContextWeaverBrain:
             )
 
         max_sev = max(s.severity for s in state.shards)
+        # recency: 1.0 = all shards are "recent" (data from current query)
+        # restart_count: derived from max severity (proxy for how bad the restart pattern is)
+        # severity: max severity from shards
+        # blast_radius: fraction of shards with severity > 0.7 (proxy for breadth of impact)
+        blast_radius = sum(1 for s in state.shards if s.severity > 0.7) / max(len(state.shards), 1)
         gravity = compute_failure_gravity(
             recency=1.0,
             restart_count=min(max_sev, 1.0),
             severity=max_sev,
-            blast_radius=0.7,
+            blast_radius=blast_radius,
         )
         if gravity < settings.failure_gravity_threshold:
             return IncidentReport(
@@ -127,7 +137,18 @@ brain = ContextWeaverBrain()
 
 @app.post("/diagnose", response_model=IncidentReport)
 async def diagnose(query: FailureQuery) -> IncidentReport:
-    return await brain.run(query)
+    try:
+        return await asyncio.wait_for(brain.run(query), timeout=2.0)
+    except asyncio.TimeoutError:
+        return IncidentReport(
+            issue_type="Unknown",
+            root_cause=f"Diagnosis timed out for {query.service}",
+            confidence=0.0,
+            evidence=[],
+            suggested_fix=(
+                f"kubectl describe pod -l app={query.service} -n {query.namespace}"
+            ),
+        )
 
 @app.get("/health")
 async def health():
